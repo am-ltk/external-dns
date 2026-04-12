@@ -251,12 +251,14 @@ func (p *AWSSDProvider) ApplyChanges(ctx context.Context, changes *plan.Changes)
 		return err
 	}
 
-	err = p.submitDeletes(ctx, namespaces, changes.Delete)
+	// Register new instances before deregistering old ones to avoid a
+	// window where the service has no instances and DNS returns NXDOMAIN.
+	err = p.submitCreates(ctx, namespaces, changes.Create)
 	if err != nil {
 		return err
 	}
 
-	err = p.submitCreates(ctx, namespaces, changes.Create)
+	err = p.submitDeletes(ctx, namespaces, changes.Delete)
 	if err != nil {
 		return err
 	}

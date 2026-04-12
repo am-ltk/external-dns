@@ -53,6 +53,9 @@ type AWSSDClientStub struct {
 
 	// []inst_id
 	deregistered []string
+
+	// ordered log of register/deregister operations for sequencing assertions
+	opLog []string
 }
 
 func (s *AWSSDClientStub) CreateService(_ context.Context, input *servicediscovery.CreateServiceInput, _ ...func(*servicediscovery.Options)) (*servicediscovery.CreateServiceOutput, error) {
@@ -81,6 +84,7 @@ func (s *AWSSDClientStub) DeregisterInstance(_ context.Context, input *servicedi
 	serviceInstances := s.instances[*input.ServiceId]
 	delete(serviceInstances, *input.InstanceId)
 	s.deregistered = append(s.deregistered, *input.InstanceId)
+	s.opLog = append(s.opLog, "deregister:"+*input.InstanceId)
 
 	return &servicediscovery.DeregisterInstanceOutput{}, nil
 }
@@ -173,6 +177,7 @@ func (s *AWSSDClientStub) RegisterInstance(_ context.Context, input *sd.Register
 		Attributes:       input.Attributes,
 		CreatorRequestId: input.CreatorRequestId,
 	}
+	s.opLog = append(s.opLog, "register:"+*input.InstanceId)
 
 	return &sd.RegisterInstanceOutput{}, nil
 }
