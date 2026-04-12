@@ -358,6 +358,59 @@ func TestAWSSDProvider_ApplyChanges_Update(t *testing.T) {
 	assert.Equal(t, "1.2.3.5", api.deregistered[0], "wrong target de-registered")
 }
 
+func TestAWSSDProvider_ApplyChanges_UpdateCreatesBeforeDeletes(t *testing.T) {
+	namespaces := map[string]*sdtypes.Namespace{
+		"private": {
+			Id:   aws.String("private"),
+			Name: aws.String("private.com"),
+			Type: sdtypes.NamespaceTypeDnsPrivate,
+		},
+	}
+
+	api := &AWSSDClientStub{
+		namespaces: namespaces,
+		services:   make(map[string]map[string]*sdtypes.Service),
+		instances:  make(map[string]map[string]*sdtypes.Instance),
+	}
+
+	oldEndpoints := []*endpoint.Endpoint{
+		{DNSName: "service1.private.com", Targets: endpoint.Targets{"1.2.3.4"}, RecordType: endpoint.RecordTypeA, RecordTTL: 60},
+	}
+	newEndpoints := []*endpoint.Endpoint{
+		{DNSName: "service1.private.com", Targets: endpoint.Targets{"5.6.7.8"}, RecordType: endpoint.RecordTypeA, RecordTTL: 60},
+	}
+
+	provider := newTestAWSSDProvider(api, endpoint.NewDomainFilter([]string{}), "", "")
+
+	// seed the initial instance
+	err := provider.ApplyChanges(t.Context(), &plan.Changes{Create: oldEndpoints})
+	require.NoError(t, err)
+
+	// reset the operation log so we only capture the update
+	api.opLog = nil
+
+	// apply target change
+	err = provider.ApplyChanges(t.Context(), &plan.Changes{
+		UpdateOld: oldEndpoints,
+		UpdateNew: newEndpoints,
+	})
+	require.NoError(t, err)
+
+	// all register calls must appear before any deregister call
+	lastRegister := -1
+	firstDeregister := len(api.opLog)
+	for i, op := range api.opLog {
+		if len(op) > 9 && op[:9] == "register:" {
+			lastRegister = i
+		}
+		if len(op) > 11 && op[:11] == "deregister:" && i < firstDeregister {
+			firstDeregister = i
+		}
+	}
+	assert.Greater(t, firstDeregister, lastRegister,
+		"expected all registers before any deregister, opLog=%v", api.opLog)
+}
+
 func TestAWSSDProvider_ApplyChanges_DottedServiceName(t *testing.T) {
 	namespaces := map[string]*sdtypes.Namespace{
 		"dev-local": {
