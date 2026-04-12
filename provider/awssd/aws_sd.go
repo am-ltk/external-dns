@@ -88,6 +88,8 @@ type AWSSDProvider struct {
 	ownerID string
 	// tags to be added to the service
 	tags []sdtypes.Tag
+	// real Cloud Map InstanceId keyed by target value, populated by Records()
+	instanceIDsByTarget map[string]string
 }
 
 // New creates an AWS Service Discovery provider from the given configuration.
@@ -156,6 +158,7 @@ func (p *AWSSDProvider) Records(ctx context.Context) ([]*endpoint.Endpoint, erro
 		return nil, err
 	}
 
+	p.instanceIDsByTarget = make(map[string]string)
 	endpoints := make([]*endpoint.Endpoint, 0)
 
 	for _, ns := range namespaces {
@@ -186,6 +189,15 @@ func (p *AWSSDProvider) Records(ctx context.Context) ([]*endpoint.Endpoint, erro
 			}
 
 			endpoints = append(endpoints, p.instancesToEndpoint(ns, srv, resp.Instances))
+
+			for _, inst := range resp.Instances {
+				id := aws.ToString(inst.InstanceId)
+				for _, key := range []string{sdInstanceAttrIPV4, sdInstanceAttrIPV6, sdInstanceAttrCname, sdInstanceAttrAlias} {
+					if v := inst.Attributes[key]; v != "" {
+						p.instanceIDsByTarget[v] = id
+					}
+				}
+			}
 		}
 	}
 
@@ -568,11 +580,16 @@ func (p *AWSSDProvider) RegisterInstance(ctx context.Context, service *sdtypes.S
 // DeregisterInstance removes an instance from given service.
 func (p *AWSSDProvider) DeregisterInstance(ctx context.Context, service *sdtypes.Service, ep *endpoint.Endpoint) error {
 	for _, target := range ep.Targets {
-		log.Infof("De-registering an instance \"%s\" for service \"%s\" (%s)", target, *service.Name, *service.Id)
+		instanceID := p.instanceIDsByTarget[target]
+		if instanceID == "" {
+			instanceID = p.targetToInstanceID(target)
+		}
+
+		log.Infof("De-registering instance %q (id: %s) for service %q (%s)", target, instanceID, *service.Name, *service.Id)
 
 		if !p.dryRun {
 			_, err := p.client.DeregisterInstance(ctx, &sd.DeregisterInstanceInput{
-				InstanceId: aws.String(p.targetToInstanceID(target)),
+				InstanceId: aws.String(instanceID),
 				ServiceId:  service.Id,
 			})
 			if err != nil {

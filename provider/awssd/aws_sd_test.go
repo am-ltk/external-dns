@@ -1007,6 +1007,64 @@ func TestAWSSDProvider_DeregisterInstance(t *testing.T) {
 	assert.Empty(t, instances["srv1"])
 }
 
+func TestAWSSDProvider_DeregisterInstance_ForeignInstanceID(t *testing.T) {
+	namespaces := map[string]*sdtypes.Namespace{
+		"private": {
+			Id:   aws.String("private"),
+			Name: aws.String("private.com"),
+			Type: sdtypes.NamespaceTypeDnsPrivate,
+		},
+	}
+
+	services := map[string]map[string]*sdtypes.Service{
+		"private": {
+			"srv1": {
+				Id:          aws.String("srv1"),
+				Name:        aws.String("service1"),
+				Description: aws.String("owner-id"),
+				DnsConfig: &sdtypes.DnsConfig{
+					NamespaceId: aws.String("private"),
+					DnsRecords: []sdtypes.DnsRecord{
+						{Type: sdtypes.RecordTypeCname, TTL: aws.Int64(60)},
+					},
+				},
+			},
+		},
+	}
+
+	albHostname := "my-alb-123456.us-east-1.elb.amazonaws.com"
+
+	instances := map[string]map[string]*sdtypes.Instance{
+		"srv1": {
+			"foreign-cfn-001": {
+				Id: aws.String("foreign-cfn-001"),
+				Attributes: map[string]string{
+					sdInstanceAttrAlias: albHostname,
+				},
+			},
+		},
+	}
+
+	api := &AWSSDClientStub{
+		namespaces: namespaces,
+		services:   services,
+		instances:  instances,
+	}
+
+	provider := newTestAWSSDProvider(api, endpoint.NewDomainFilter([]string{}), "", "owner-id")
+
+	// Records() populates the instanceIDsByTarget cache
+	_, err := provider.Records(t.Context())
+	require.NoError(t, err)
+
+	// DeregisterInstance should use the cached foreign ID, not targetToInstanceID()
+	ep := endpoint.NewEndpoint("service1.private.com", endpoint.RecordTypeCNAME, albHostname)
+	err = provider.DeregisterInstance(t.Context(), services["private"]["srv1"], ep)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"foreign-cfn-001"}, api.deregistered)
+}
+
 func TestAWSSDProvider_awsTags(t *testing.T) {
 	tests := []struct {
 		Expectation []sdtypes.Tag
