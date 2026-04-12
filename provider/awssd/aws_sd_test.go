@@ -157,6 +157,7 @@ func TestAWSSDProvider_Records(t *testing.T) {
 		{DNSName: "service2.private.com", Targets: endpoint.Targets{"load-balancer.us-east-1.elb.amazonaws.com"}, RecordType: endpoint.RecordTypeCNAME, RecordTTL: 100, Labels: map[string]string{endpoint.AWSSDDescriptionLabel: "owner-id"}},
 		{DNSName: "service3.private.com", Targets: endpoint.Targets{"cname.target.com"}, RecordType: endpoint.RecordTypeCNAME, RecordTTL: 80, Labels: map[string]string{endpoint.AWSSDDescriptionLabel: "owner-id"}},
 		{DNSName: "service4.private.com", Targets: endpoint.Targets{"0000:0000:0000:0000:abcd:abcd:abcd:abcd"}, RecordType: endpoint.RecordTypeAAAA, RecordTTL: 100, Labels: map[string]string{endpoint.AWSSDDescriptionLabel: "owner-id"}},
+		{DNSName: "service5.private.com", Targets: endpoint.Targets{"0000:0000:0000:0000:abcd:abcd:abcd:abcd"}, RecordType: endpoint.RecordTypeAAAA, RecordTTL: 100, Labels: map[string]string{endpoint.AWSSDDescriptionLabel: ""}},
 	}
 
 	api := &AWSSDClientStub{
@@ -169,6 +170,83 @@ func TestAWSSDProvider_Records(t *testing.T) {
 
 	endpoints, _ := provider.Records(t.Context())
 
+	assert.True(t, testutils.SameEndpoints(expectedEndpoints, endpoints), "expected and actual endpoints don't match, expected=%v, actual=%v", expectedEndpoints, endpoints)
+}
+
+func TestAWSSDProvider_Records_NilDescription(t *testing.T) {
+	namespaces := map[string]*sdtypes.Namespace{
+		"private": {
+			Id:   aws.String("private"),
+			Name: aws.String("private.com"),
+			Type: sdtypes.NamespaceTypeDnsPrivate,
+		},
+	}
+
+	services := map[string]map[string]*sdtypes.Service{
+		"private": {
+			"owned-srv": {
+				Id:          aws.String("owned-srv"),
+				Name:        aws.String("owned"),
+				NamespaceId: aws.String("private"),
+				Description: aws.String("heritage=external-dns,external-dns/owner=my-owner"),
+				DnsConfig: &sdtypes.DnsConfig{
+					RoutingPolicy: sdtypes.RoutingPolicyWeighted,
+					DnsRecords: []sdtypes.DnsRecord{{
+						Type: sdtypes.RecordTypeA,
+						TTL:  aws.Int64(60),
+					}},
+				},
+			},
+			"unowned-srv": {
+				Id:          aws.String("unowned-srv"),
+				Name:        aws.String("unowned"),
+				NamespaceId: aws.String("private"),
+				Description: nil,
+				DnsConfig: &sdtypes.DnsConfig{
+					RoutingPolicy: sdtypes.RoutingPolicyWeighted,
+					DnsRecords: []sdtypes.DnsRecord{{
+						Type: sdtypes.RecordTypeA,
+						TTL:  aws.Int64(60),
+					}},
+				},
+			},
+		},
+	}
+
+	instances := map[string]map[string]*sdtypes.Instance{
+		"owned-srv": {
+			"1.2.3.4": {
+				Id: aws.String("1.2.3.4"),
+				Attributes: map[string]string{
+					sdInstanceAttrIPV4: "1.2.3.4",
+				},
+			},
+		},
+		"unowned-srv": {
+			"5.6.7.8": {
+				Id: aws.String("5.6.7.8"),
+				Attributes: map[string]string{
+					sdInstanceAttrIPV4: "5.6.7.8",
+				},
+			},
+		},
+	}
+
+	expectedEndpoints := []*endpoint.Endpoint{
+		{DNSName: "owned.private.com", Targets: endpoint.Targets{"1.2.3.4"}, RecordType: endpoint.RecordTypeA, RecordTTL: 60, Labels: map[string]string{endpoint.AWSSDDescriptionLabel: "heritage=external-dns,external-dns/owner=my-owner"}},
+		{DNSName: "unowned.private.com", Targets: endpoint.Targets{"5.6.7.8"}, RecordType: endpoint.RecordTypeA, RecordTTL: 60, Labels: map[string]string{endpoint.AWSSDDescriptionLabel: ""}},
+	}
+
+	api := &AWSSDClientStub{
+		namespaces: namespaces,
+		services:   services,
+		instances:  instances,
+	}
+
+	provider := newTestAWSSDProvider(api, endpoint.NewDomainFilter([]string{}), "", "")
+
+	endpoints, err := provider.Records(t.Context())
+	require.NoError(t, err)
 	assert.True(t, testutils.SameEndpoints(expectedEndpoints, endpoints), "expected and actual endpoints don't match, expected=%v, actual=%v", expectedEndpoints, endpoints)
 }
 

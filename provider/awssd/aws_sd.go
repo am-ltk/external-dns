@@ -181,8 +181,7 @@ func (p *AWSSDProvider) Records(ctx context.Context) ([]*endpoint.Endpoint, erro
 			}
 
 			if srv.Description == nil {
-				log.Warnf("Skipping service %q as owner id not configured", *srv.Name)
-				continue
+				srv.Description = aws.String("")
 			}
 
 			endpoints = append(endpoints, p.instancesToEndpoint(ns, srv, resp.Instances))
