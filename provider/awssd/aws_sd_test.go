@@ -965,6 +965,71 @@ func TestAWSSDProvider_RegisterInstance(t *testing.T) {
 	}
 }
 
+func TestAWSSDProvider_RegisterInstance_AdoptsForeignInstance(t *testing.T) {
+	albHostname := "my-alb-123456.us-east-1.elb.amazonaws.com"
+
+	namespaces := map[string]*sdtypes.Namespace{
+		"private": {
+			Id:   aws.String("private"),
+			Name: aws.String("private.com"),
+			Type: sdtypes.NamespaceTypeDnsPrivate,
+		},
+	}
+
+	services := map[string]map[string]*sdtypes.Service{
+		"private": {
+			"srv1": {
+				Id:          aws.String("srv1"),
+				Name:        aws.String("service1"),
+				Description: aws.String("owner-id"),
+				DnsConfig: &sdtypes.DnsConfig{
+					NamespaceId: aws.String("private"),
+					DnsRecords: []sdtypes.DnsRecord{
+						{Type: sdtypes.RecordTypeCname, TTL: aws.Int64(60)},
+					},
+				},
+			},
+		},
+	}
+
+	instances := map[string]map[string]*sdtypes.Instance{
+		"srv1": {
+			"foreign-cfn-001": {
+				Id: aws.String("foreign-cfn-001"),
+				Attributes: map[string]string{
+					sdInstanceAttrAlias: albHostname,
+				},
+			},
+		},
+	}
+
+	api := &AWSSDClientStub{
+		namespaces: namespaces,
+		services:   services,
+		instances:  instances,
+	}
+
+	provider := newTestAWSSDProvider(api, endpoint.NewDomainFilter([]string{}), "", "owner-id")
+
+	// Records() populates the instanceIDsByTarget cache
+	_, err := provider.Records(t.Context())
+	require.NoError(t, err)
+
+	// RegisterInstance should adopt the foreign instance ID via cache
+	err = provider.RegisterInstance(t.Context(), services["private"]["srv1"], &endpoint.Endpoint{
+		RecordType: endpoint.RecordTypeCNAME,
+		DNSName:    "service1.private.com",
+		Targets:    endpoint.Targets{albHostname},
+	})
+	require.NoError(t, err)
+
+	// Should have exactly one instance, still using the foreign ID
+	srvInstances := api.instances["srv1"]
+	require.Len(t, srvInstances, 1)
+	assert.NotNil(t, srvInstances["foreign-cfn-001"], "expected instance to keep foreign ID")
+	assert.Equal(t, albHostname, srvInstances["foreign-cfn-001"].Attributes[sdInstanceAttrAlias])
+}
+
 func TestAWSSDProvider_DeregisterInstance(t *testing.T) {
 	namespaces := map[string]*sdtypes.Namespace{
 		"private": {

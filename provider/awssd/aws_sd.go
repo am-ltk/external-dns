@@ -562,11 +562,16 @@ func (p *AWSSDProvider) RegisterInstance(ctx context.Context, service *sdtypes.S
 			return fmt.Errorf("invalid endpoint type (%v)", ep)
 		}
 
+		instanceID := p.instanceIDsByTarget[target]
+		if instanceID == "" {
+			instanceID = p.targetToInstanceID(target)
+		}
+
 		if !p.dryRun {
 			_, err := p.client.RegisterInstance(ctx, &sd.RegisterInstanceInput{
 				ServiceId:  service.Id,
 				Attributes: attr,
-				InstanceId: aws.String(p.targetToInstanceID(target)),
+				InstanceId: aws.String(instanceID),
 			})
 			if err != nil {
 				return err
